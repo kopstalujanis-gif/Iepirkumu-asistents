@@ -1,0 +1,31 @@
+name: Windows tests and portable application
+on:
+  workflow_dispatch:
+  push:
+    branches: [main, work]
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Test, build and verify the Windows executable
+        shell: pwsh
+        run: ./scripts/build_windows.ps1
+      - uses: actions/upload-artifact@v4
+        with:
+          name: IepirkumuAsistents-Windows
+          path: dist/IepirkumuAsistents-Windows.zip
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: Windows-startup-check
+          path: dist/windows-smoke.json
+          if-no-files-found: warn

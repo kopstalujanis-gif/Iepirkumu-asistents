@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iepirkumu-asistents"
+version = "0.1.0"
+description = "Lokāls Ādažu vidusskolas iepirkumu iesniegumu sagatavošanas rīks"
+requires-python = ">=3.12"
+dependencies = ["PySide6-Essentials==6.12.0", "python-docx==1.2.0", "PyMuPDF==1.26.6", "openpyxl==3.1.5"]
+
+[project.optional-dependencies]
+dev = ["pytest==9.2.0", "pyinstaller==6.22.3"]
+
+[project.scripts]
+iepirkumi = "iepirkumi.launch:main"
+
+[tool.setuptools]
+packages = ["iepirkumi"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
