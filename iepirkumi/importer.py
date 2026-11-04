@@ -8,6 +8,7 @@ import pymupdf
 from docx import Document
 from openpyxl import load_workbook
 from .models import Evidence, money
+from .ocr import needs_ocr, recognize
 
 MAX_BYTES = 40 * 1024 * 1024
 MAX_TOTAL = 150 * 1024 * 1024
@@ -58,26 +59,54 @@ def _read(name, data, ocr, warnings, budget, depth):
                     raise ImportFailure("Arhīva saturs pārsniedz atļauto izmēru.")
                 if part.parts[0].lower() == 'meta-inf' or entry.filename == 'mimetype':
                     continue
-                result += _read(name + '/' + entry.filename, z.read(entry), ocr, warnings, budget, depth + 1)
+                try:
+                    result += _read(name + '/' + entry.filename, z.read(entry), ocr, warnings, budget, depth + 1)
+                except ImportFailure:
+                    raise
+                except Exception as exc:
+                    warnings.append(f'{name}/{entry.filename}: fails bojāts vai nav nolasāms ({type(exc).__name__}); pārējie faili tiek turpināti.')
         if ext == '.edoc':
             warnings.append(name + ': nolasīts saturs; elektroniskais paraksts nav pārbaudīts.')
     elif ext == '.pdf':
         with pymupdf.open(stream=data, filetype='pdf') as d:
+            if d.needs_pass:
+                raise ImportFailure('PDF ir aizsargāts ar paroli; importējiet atbloķētu kopiju.')
             if len(d) > 200:
                 raise ImportFailure("PDF pārsniedz 200 lappuses.")
             for i, page in enumerate(d):
                 text, quality = page.get_text(sort=True), 'PDF teksts; jāpārbauda'
-                if len(text.strip()) < 30:
+                if needs_ocr(page, text):
                     quality = 'maz teksta / iespējams skenējums'
                     if ocr:
                         try:
-                            tp = page.get_textpage_ocr(language='lav+eng', dpi=200, full=True)
-                            text, quality = page.get_text(textpage=tp), 'OCR; zema ticamība, obligāti pārbaudīt'
+                            recognized = recognize(page)
+                            if recognized.strip():
+                                text, quality = recognized, 'OCR lav+eng; obligāti pārbaudīt'
+                            else:
+                                warnings.append(f'{name}, lpp. {i+1}: OCR neatrada tekstu; pārbaudiet attēlu vai izmantojiet MI.')
                         except Exception as exc:
-                            warnings.append(f'{name}, lpp. {i+1}: OCR nav pieejams ({type(exc).__name__}).')
+                            warnings.append(f'{name}, lpp. {i+1}: OCR neizdevās ({type(exc).__name__}); pārbaudiet valodu datus vai izmantojiet MI.')
                     else:
                         warnings.append(f'{name}, lpp. {i+1}: iespējams skenējums; ieslēdziet lokālo OCR vai ievadiet manuāli.')
                 result.append(Chunk(name, f'lpp. {i+1}', text, quality))
+    elif ext in ('.jpg', '.jpeg', '.png', '.tif', '.tiff', '.bmp'):
+        if not ocr:
+            warnings.append(name + ': attēla OCR nav ieslēgts.')
+            return [Chunk(name, 'attēls', '', 'attēls; OCR nav ieslēgts')]
+        try:
+            with pymupdf.open(stream=data) as image:
+                if image[0].rect.get_area() > 60_000_000:
+                    raise ImportFailure('Attēls pārsniedz 60 megapikseļus.')
+                with pymupdf.open('pdf', image.convert_to_pdf()) as pdf:
+                    for i, page in enumerate(pdf):
+                        text = recognize(page)
+                        result.append(Chunk(name, f'attēls {i+1}', text, 'OCR lav+eng; obligāti pārbaudīt'))
+                        if not text.strip(): warnings.append(name + ': OCR neatrada tekstu.')
+        except ImportFailure:
+            raise
+        except Exception as exc:
+            warnings.append(f'{name}: attēla OCR neizdevās ({type(exc).__name__}).')
+            result.append(Chunk(name, 'attēls', '', 'attēla OCR neizdevās'))
     elif ext == '.docx':
         d = Document(BytesIO(data))
         for i, p in enumerate(d.paragraphs):
@@ -106,6 +135,9 @@ def _read(name, data, ocr, warnings, budget, depth):
 
 def add_match(p, key, value, chunk):
     value = value.strip().strip('|').strip()
+    if key == 'vat_number':
+        m = re.search(r'\b[A-Z]{2}\d{8,12}\b', value)
+        value = m[0] if m else value
     if value:
         if key in ('net', 'gross'):
             try: value = f'{money(value):.2f}'
@@ -130,6 +162,8 @@ def extract_protocol(p, chunks):
         for key, pattern in {
             'procurement_id': r'Iepirkuma (?:numurs|Nr\.):\s*([^\n]+)',
             'subject': r'Iepirkuma priekšmets:\s*([^\n]+)',
+            'necessity': r'Iepirkuma apraksts:\s*([\s\S]+?)(?=\nPiedāvājuma iesniegšanas formas:|\nCPV kodi:|\nIepirkumu sagatavoja:|$)',
+            'award_reason': r'Lēmums:\s*(?:Slēgt līgumu ar[^\n]*?\.\s+)([^\n]+)',
             'published': r'Publicēts:\s*(\d{2}\.\d{2}\.\d{4})',
             'deadline': r'Piegādes termiņš:\s*(\d{2}\.\d{2}\.\d{4})',
             'delivery_place': r'Darba izpildes/piegādes vieta:\s*([^\n]+)',
@@ -142,6 +176,7 @@ def extract_protocol(p, chunks):
 
 ROW_MAP = {
     'pretendenta nosaukums': 'supplier_name', 'reģistrācijas numurs': 'registration',
+    'pvn maksātājs': 'vat_number', 'pvn reģistrācijas numurs': 'vat_number',
     'juridiskā adrese': 'address', 'tālrunis': 'phone', 'e-pasta adrese': 'email',
     'banka': 'bank', 'swift': 'swift', 'konta numurs': 'iban',
     'paraksttiesīgās personas vārds': 'representative',

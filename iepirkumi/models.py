@@ -20,8 +20,9 @@ class Field:
     confirmed: bool = False
 
     def add(self, evidence):
-        if evidence not in self.candidates:
-            self.candidates.append(evidence)
+        if evidence in self.candidates:
+            return
+        self.candidates.append(evidence)
         if len({normalize(x.value) for x in self.candidates}) == 1 and not self.edited:
             self.value = evidence.value
         elif self.conflict and not self.edited:
@@ -64,11 +65,15 @@ LABELS = {
     "municipal_iban": "Pašvaldības projekta bankas konts (ja attiecināms)",
     "category": "Vērtības kategorija (1 / 2 / 3; robežgadījumos manuāli)",
     "institution": "Iestāde / struktūrvienība (darba piezīme)", "subject": "Līguma priekšmets",
+    "request_subject": "Formulējums iesnieguma teikumā (par …)",
+    "preparer_genitive": "Sagatavotājs ģenitīvā (no …)",
+    "preparer_role_genitive": "Sagatavotāja amats ģenitīvā",
+    "payment_days": "Apmaksas termiņš kalendāra dienās",
     "procurement_id": "Iepirkuma identifikators", "date": "DVS kartiņas datums (darba piezīme)",
     "net": "Summa bez PVN (EUR)", "gross": "Summa ar PVN (EUR)",
     "deadline": "Piegādes / izpildes termiņš", "delivery_place": "Piegādes vieta",
     "payment": "Norēķinu kārtība", "supplier_name": "Izpildītāja nosaukums",
-    "registration": "Reģistrācijas numurs", "address": "Juridiskā adrese",
+    "registration": "Reģistrācijas numurs", "vat_number": "PVN reģistrācijas numurs", "address": "Juridiskā adrese",
     "bank": "Banka", "iban": "IBAN", "swift": "SWIFT",
     "phone": "Izpildītāja tālrunis", "email": "Izpildītāja e-pasts",
     "representative": "Paraksttiesīgā persona / amats", "representative_role": "Paraksttiesīgās personas amats", "authority": "Pārstāvības pamatojums",
@@ -103,3 +108,7 @@ class Procurement:
         p.imports = obj.get("imports", [])
         p.warnings = obj.get("warnings", [])
         return p
+
+# Keep legacy fields in saved projects for compatibility, but remove the requested UI sections.
+HIDDEN_FIELDS = {'category','institution','date','notes','attachments'}
+VISIBLE_LABELS = {k:v for k,v in LABELS.items() if k not in HIDDEN_FIELDS}

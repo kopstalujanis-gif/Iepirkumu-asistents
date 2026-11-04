@@ -15,6 +15,15 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
+      - name: Load optional personal defaults
+        shell: pwsh
+        env:
+          PERSONAL_PROFILE: ${{ secrets.IEPIRKUMI_PERSONAL_PROFILE }}
+        run: |
+          if ($env:PERSONAL_PROFILE) {
+            New-Item -ItemType Directory -Force local | Out-Null
+            [System.IO.File]::WriteAllText((Join-Path (Get-Location) 'local/defaults.json'), $env:PERSONAL_PROFILE, [System.Text.UTF8Encoding]::new($false))
+          }
       - name: Test, build and verify the Windows executable
         shell: pwsh
         run: ./scripts/build_windows.ps1

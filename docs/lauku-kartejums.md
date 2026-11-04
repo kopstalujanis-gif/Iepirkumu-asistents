@@ -44,3 +44,21 @@ Automātisks lauks satur failu, lappusi vai rindas adresi, teksta fragmentu, atp
 Trūkstošs lauks atstāj veidlapas vietturi; rekvizītu sadalītajā šūnā — oriģinālo “…” katram nezināmam rekvizītam. Tikai run highlight `yellow`, bez `w:shd`. Neapstiprinātas vērtības arī iezīmētas. Apstiprināšana nenoslēpj sākotnējos kandidātus. Tukšs lauks saglabā iezīmējumu arī pēc pārbaudes atzīmes.
 
 Pārējais oriģinālais teksts, tabulu režģi, apvienojumi un piemales saglabāti. No oriģināla izņemts tikai dekoratīvais ✍ simbols un noslēdzošās tukšās rindkopas, lai nerastos tukša pēdējā lapa; izvēles rūtiņas saglabātas. Lappušu skaitu nenodrošina ar fonta samazināšanu.
+
+## 0.2 versija — lietotāja apstiprinātais gala izkārtojums
+
+Noklusējumā izmanto `templates/avs_2026.docx`, kas sagatavots no lietotāja iesniegtā gala varianta, noņemot konkrētā iepirkuma datus un autoru metadatus. Sanitizēšanas skripts: `scripts/prepare_avs_template.py`. Pilnais privātais paraugs netiek pievienots Git. Iepriekšējā oriģinālā oficiālā veidlapa un tās aizpildīšanas pārbaudes saglabātas.
+
+Papildu precīzs kartējums:
+
+| Lauks | Vieta / noteikums |
+|---|---|
+| `preparer_genitive` | Rindkopa 4: `no …`; ģenitīvs no lietotāja profila vai darbinieka ieraksta, nevis algoritmisks personas vārda locījuma minējums |
+| `preparer_role_genitive` | Rindkopa 5: amats ģenitīvā |
+| `request_subject` | Rindkopa 7: atsevišķs formulējums pēc “par”; `subject` paliek īsais nosaukums tabulā |
+| `vat_number` | Izpildītāja rekvizītos atsevišķi no reģistrācijas numura, tikai pēc avota |
+| `payment_days` | Tabula 3, rinda 8: kalendāra dienu skaits; no neprecizēta “60 dienas” automātiski neatvasina kalendāra dienu faktu |
+
+Rekvizīti ir kompakti vienā šūnā ar rindu pārnesumiem, 10 pt Times New Roman; saglabātas gala parauga tabulas, apvienojumi un piemales. Neizmantotā izņēmuma sadaļa pēc noklusējuma ir tukša, kā lietotāja gala paraugā; piemērojamību izvērtē cilvēks. Trūkstošie pārējie dati ir “…” ar teksta highlight.
+
+No saskarnes izņemti vecie lauki 24/25/26/37/38 (`category`, `institution`, `date`, `notes`, `attachments`). Vecā JSON dati saglabājas savietojamībai. Kategorijas robežgadījumiem ir atsevišķa manuāla izvēle. Darbinieku noklusējumi tiek glabāti personiskā profilā ārpus Git; EKK un līguma fakti netiek iestatīti globāli pēc viena piemēra.

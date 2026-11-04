@@ -1,7 +1,7 @@
 import sys
 import logging
 from pathlib import Path
-from PySide6.QtCore import Qt, QThread, Signal, QUrl
+from PySide6.QtCore import Qt, QThread, Signal, QUrl, QEvent
 from PySide6.QtGui import QAction, QDesktopServices
 from PySide6.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
@@ -10,14 +10,15 @@ from PySide6.QtWidgets import (
     QFormLayout, QLineEdit, QDialogButtonBox, QListWidget, QProgressDialog,
     QHeaderView, QAbstractItemView,
 )
-from .models import Procurement, LABELS, Field
+from .models import Procurement, LABELS, VISIBLE_LABELS, Field
 from .storage import Store, save_project, load_project, data_dir
 from .importer import read_file, extract_protocol, extract_offers
 from .validation import validate
 from .word import generate
+from .pipeline import import_chunks
 
-EMPLOYEE = {'first_name':'Vārds','last_name':'Uzvārds','position':'Amats','phone':'Tālrunis','email':'E-pasts'}
-SUPPLIER = {k: LABELS[k] for k in ['supplier_name','registration','address','bank','iban','swift','phone','email','representative','representative_role','authority','contact']}
+EMPLOYEE = {'first_name':'Vārds','last_name':'Uzvārds','position':'Amats','phone':'Tālrunis','email':'E-pasts','header_name':'Vārds, uzvārds ģenitīvā (no …)','header_role':'Amats ģenitīvā'}
+SUPPLIER = {k: LABELS[k] for k in ['supplier_name','registration','vat_number','address','bank','iban','swift','phone','email','representative','representative_role','authority','contact']}
 
 
 def person_text(r):
@@ -59,11 +60,15 @@ class ImportWorker(QThread):
 class Window(QMainWindow):
     def __init__(self, store=None):
         super().__init__()
-        self.store = store or Store(); self.project = Procurement(); self.path = None
+        self.store = store or Store();
+        from .profile import seed_store
+        seed_store(self.store)
+        self.project = Procurement(); self.path = None
         self.loading = False; self.dirty = False; self.busy = False; self.worker = None
-        self.setWindowTitle('Iepirkumu asistents'); self.resize(1320,880)
+        self.session_api_key=''; self.import_message=''; self.import_failed=False
+        self.setWindowTitle('Iepirkumu asistents 0.2'); self.resize(1320,880)
         self.toolbar = self.addToolBar('Darbības'); self.toolbar.setMovable(False)
-        for label, fn in [('Jauns',self.new),('Atvērt',self.open),('Saglabāt',self.save),('Importēt protokolu',lambda:self.import_doc(True)),('Importēt piedāvājumus',lambda:self.import_doc(False)),('Ģenerēt DOCX',self.export)]:
+        for label, fn in [('Jauns',self.new),('Atvērt',self.open),('Saglabāt',self.save),('Importēt protokolu',lambda:self.import_doc(True)),('Importēt piedāvājumus',lambda:self.import_doc(False)),('Ģenerēt DOCX',self.export),('MI analīze',self.analyze_ai)]:
             action = QAction(label,self); action.triggered.connect(fn); self.toolbar.addAction(action)
         self.tabs = QTabWidget(); self.setCentralWidget(self.tabs)
         self.build_project(); self.build_sources(); self.build_registers(); self.build_help()
@@ -80,18 +85,21 @@ class Window(QMainWindow):
             people.addWidget(combo); self.combos[key] = combo
             combo.activated.connect(lambda index,k=key:self.choose_record(k,index))
         outer.addLayout(people)
-        self.ocr = QCheckBox('Lokāls OCR skenētiem PDF (nepieciešams Tesseract ar lav+eng)'); outer.addWidget(self.ocr)
+        self.ocr = QCheckBox('Automātisks OCR skenētiem PDF un attēliem (lav+eng iekļauts programmā)'); self.ocr.setChecked(True); outer.addWidget(self.ocr)
+        self.category_choice=QComboBox();self.category_choice.addItems(['Vērtības robežgadījums — izvēlieties','1 — līdz 500 EUR','2 — 500–5999 EUR','3 — virs 6000 EUR']);self.category_choice.activated.connect(self.choose_category);outer.addWidget(self.category_choice);self.category_choice.hide()
+        self.import_summary=QLabel('Pievienojiet protokolu un piedāvājumus jebkurā secībā.');self.import_summary.setWordWrap(True);outer.addWidget(self.import_summary)
         split = QSplitter(Qt.Horizontal)
-        self.table = QTableWidget(len(LABELS),3)
+        self.table = QTableWidget(len(VISIBLE_LABELS),3)
         self.table.setHorizontalHeaderLabels(['Lauks','Vērtība (var labot)','Pārbaudīts'])
         self.table.horizontalHeader().setSectionResizeMode(1,QHeaderView.Stretch)
         self.table.setColumnWidth(0,325); self.table.setColumnWidth(2,100)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.editors, self.checks = {}, {}
-        for row,(key,label) in enumerate(LABELS.items()):
+        for row,(key,label) in enumerate(VISIBLE_LABELS.items()):
             item = QTableWidgetItem(label); item.setFlags(item.flags() & ~Qt.ItemIsEditable)
             self.table.setItem(row,0,item)
             edit = QPlainTextEdit(); edit.setTabChangesFocus(True); edit.setMaximumHeight(72)
+            edit.setProperty('field_row',row);edit.installEventFilter(self)
             edit.setAccessibleName(label); edit.textChanged.connect(lambda k=key:self.changed(k))
             self.table.setCellWidget(row,1,edit); self.editors[key] = edit
             check = QCheckBox('Jā'); check.toggled.connect(lambda value,k=key:self.confirm(k,value))
@@ -147,13 +155,17 @@ class Window(QMainWindow):
             'Iesnieguma datums ir DVS kartiņas datums; to automātiski neaizvieto ar protokola datumu.\n'
             'Tukšie vietturi un neapstiprinātie dati ir iezīmēti tikai ar Word teksta highlight. Neizmantojamo sadaļu piemērojamību pārbauda cilvēks.\n\n'
             'Drošība un ierobežojumi\n'
-            'Nav MI integrācijas, API atslēgu vai dokumentu sūtīšanas ārpakalpojumiem. OCR darbojas lokāli un prasa Tesseract lav+eng. OCR teksts vienmēr jāpārbauda.\n'
+            'Pēc noklusējuma dati netiek sūtīti ārpakalpojumiem. “MI analīze” ir izvēles OpenAI API modulis; katrs pieprasījums prasa skaidru piekrišanu. OCR darbojas lokāli ar komplektā esošajiem lav+eng datiem. OCR teksts vienmēr jāpārbauda.\n'
             'Piedāvājumu automātiskie noteikumi atpazīst marķētas tabulu rindas un salīdzina tikai dokumentus ar izvēlētā piegādātāja reģistrācijas numuru. Citi teksti ir apskatāmi avotos manuālai ievadei.\n'
             'DOC fails vispirms jākonvertē uz DOCX ar Word vai LibreOffice. EDOC elektroniskā paraksta derīgumu pārbaudiet atsevišķi.\n'
             'Reģistri: ' + str(self.store.path) + '\n'
             'Projektu JSON satur ievadītos datus un avotu fragmentus. Glabājiet tos aizsargātā mapē. Reģistru dzēšana neizdzēš projektu failus, eksportus vai rezerves kopijas; tos dzēsiet arī failu pārvaldniekā.\n'
             'Windows EXE būvēšanas un instalēšanas soļi ir README. Šī ir pirmā versija; gala apstiprinājumu veic cilvēks.')
         self.tabs.addTab(view,'Lietošana')
+
+    def choose_category(self,index):
+        self.project.fields['category']=Field(str(index) if index else '',edited=True,confirmed=bool(index))
+        self.dirty=True;self.update_issues()
 
     def changed(self,key):
         if self.loading: return
@@ -169,6 +181,7 @@ class Window(QMainWindow):
     def load_fields(self):
         self.loading = True
         for key,f in self.project.fields.items():
+            if key not in self.editors: continue
             self.editors[key].setPlainText(f.value); self.checks[key].setChecked(f.confirmed)
         self.loading = False
         for combo in self.combos.values(): combo.setCurrentIndex(0)
@@ -178,13 +191,26 @@ class Window(QMainWindow):
         self.show_evidence(); self.update_issues()
 
     def update_issues(self):
+        from .validation import category
+        try:boundary=bool(self.project.fields['net'].value) and category(self.project.fields['net'].value) is None
+        except ValueError:boundary=False
+        chosen=self.project.fields['category'].value
+        self.category_choice.setVisible(boundary or bool(chosen))
+        self.category_choice.setCurrentIndex(int(chosen) if chosen in ('1','2','3') else 0)
         self.issues.setPlainText('\n\n'.join(validate(self.project)) or 'Pārbaudes brīdinājumu nav. Pārskatiet gala dokumentu.')
-        for row,(key,f) in enumerate(self.project.fields.items()):
+        for row,key in enumerate(VISIBLE_LABELS):
+            f=self.project.fields[key]
             self.table.item(row,0).setToolTip('Avotos ir neatbilstība' if f.conflict else '')
+
+    def eventFilter(self,obj,event):
+        if event.type()==QEvent.FocusIn:
+            row=obj.property('field_row')
+            if row is not None:self.table.setCurrentCell(int(row),0)
+        return super().eventFilter(obj,event)
 
     def current_key(self):
         row = self.table.currentRow()
-        return list(LABELS)[row] if row >= 0 else None
+        return list(VISIBLE_LABELS)[row] if row >= 0 else None
 
     def show_evidence(self,*_):
         self.evidence_list.clear(); self.fragment.clear()
@@ -231,10 +257,16 @@ class Window(QMainWindow):
         kind = 'supplier' if key=='supplier' else 'employee'
         r = next(r for i,r in self.records[kind] if i==record_id)
         if kind=='employee':
-            self.editors[key].setPlainText(person_text(r)); self.store.set_setting(key,record_id)
+            self.editors[key].setPlainText(r.get('responsible_text') or person_text(r) if key=='responsible' else person_text(r))
+            if key=='preparer':
+                self.editors['preparer_genitive'].setPlainText(r.get('header_name',''))
+                self.editors['preparer_role_genitive'].setPlainText(r.get('header_role',''))
+            self.store.set_setting(key,record_id)
         else:
             for field in SUPPLIER:
                 self.editors[field].setPlainText(r.get(field,''))
+            if self.project.imports:
+                import_chunks(self.project,[]);self.load_fields()
 
     def edit_record(self,kind,new):
         row = self.record_lists[kind].currentRow()
@@ -278,8 +310,10 @@ class Window(QMainWindow):
 
     def open(self):
         if not self.may_discard(): return
-        path,_ = QFileDialog.getOpenFileName(self,'Atvērt iepirkumu','','Iepirkums (*.json)')
+        path,_ = QFileDialog.getOpenFileName(self,'Atvērt iepirkumu vai importēt dokumentu','','Iepirkums vai dokuments (*.json *.pdf *.zip *.edoc *.docx *.xlsx *.jpg *.jpeg *.png *.tif *.tiff)')
         if not path: return
+        if Path(path).suffix.lower()!='.json':
+            self.start_import(path);return
         try:
             self.project = load_project(path); self.path = path; self.load_fields(); self.dirty = False
             self.setWindowTitle('Iepirkumu asistents — ' + Path(path).name)
@@ -296,25 +330,57 @@ class Window(QMainWindow):
             self.error(str(e)); return False
 
     def import_doc(self,protocol):
-        path,_ = QFileDialog.getOpenFileName(self,'Protokols' if protocol else 'Piedāvājumi','','Dokumenti (*.pdf *.docx *.xlsx *.zip *.edoc)')
+        path,_ = QFileDialog.getOpenFileName(self,'Protokols' if protocol else 'Piedāvājumi','','Dokumenti (*.pdf *.docx *.xlsx *.zip *.edoc *.jpg *.jpeg *.png *.tif *.tiff)')
         if not path: return
+        self.start_import(path)
+
+    def start_import(self,path):
+        self.import_failed=False
         self.busy = True; self.centralWidget().setEnabled(False); self.toolbar.setEnabled(False)
         self.progress = QProgressDialog('Nolasa dokumentus lokāli…',None,0,0,self)
         self.progress.setWindowModality(Qt.WindowModal); self.progress.show()
         self.worker = ImportWorker(path,self.ocr.isChecked())
-        self.worker.result.connect(lambda chunks,warnings:self.imported(protocol,chunks,warnings))
-        self.worker.failed.connect(self.error)
+        self.worker.result.connect(lambda chunks,warnings:self.imported(None,chunks,warnings))
+        self.worker.failed.connect(self.import_error)
         self.worker.finished.connect(self.import_finished)
         self.worker.start()
 
     def imported(self,protocol,chunks,warnings):
-        if protocol: extract_protocol(self.project,chunks)
-        else: extract_offers(self.project,chunks)
-        self.project.warnings.extend(warnings); self.load_fields(); self.dirty = True
+        stats=import_chunks(self.project,chunks,warnings)
+        self.load_fields(); self.dirty=True
+        self.import_message=(f"Nolasīts {stats['fragments']} avotu fragmentos, {stats['characters']:,} rakstzīmes. "
+                             f"Aizpildīti {stats['filled']} lauki; neatbilstības: {stats['conflicts']}. "
+                             f"Importa ziņojumi: {stats['warnings']}.")
+        if stats['characters']==0:self.import_message+=' Teksts nav nolasīts; pārbaudiet OCR vai izmantojiet MI vizuālo PDF nolasīšanu.'
+        elif stats['new_fields']==0:self.import_message+=' Jaunu lauku nav: avotus var nolasīt MI vai pārbaudīt manuāli sadaļā “Avoti”.'
+        self.import_summary.setText(self.import_message)
+
+    def import_error(self,message):
+        self.import_failed=True;self.import_message='Imports neizdevās: '+message
+        self.error(message)
 
     def import_finished(self):
-        self.busy = False; self.progress.close(); self.centralWidget().setEnabled(True); self.toolbar.setEnabled(True)
-        self.statusBar().showMessage('Imports pabeigts. Pārbaudiet laukus, avotus un brīdinājumus.')
+        self.busy=False;self.progress.close();self.centralWidget().setEnabled(True);self.toolbar.setEnabled(True)
+        self.statusBar().showMessage(self.import_message)
+
+    def analyze_ai(self):
+        from .ui_ai import AIDialog, AIWorker
+        dialog=AIDialog(self.project,self,self.session_api_key)
+        if not dialog.exec():return
+        self.session_api_key=dialog.api_key
+        self.busy=True;self.centralWidget().setEnabled(False);self.toolbar.setEnabled(False)
+        self.progress=QProgressDialog('OpenAI API analizē atlasītos dokumentus…',None,0,0,self)
+        self.progress.setWindowModality(Qt.WindowModal);self.progress.show()
+        self.worker=AIWorker(dialog.job,dialog.api_key)
+        self.worker.result.connect(self.ai_finished)
+        self.worker.failed.connect(self.import_error)
+        self.worker.finished.connect(self.import_finished);self.worker.start()
+
+    def ai_finished(self,entries,usage):
+        from .ai import apply
+        apply(self.project,entries);self.load_fields();self.dirty=True
+        self.import_message=f'MI atgrieza {len(entries)} vērtības. Ievades tokeni: {usage.get("input_tokens","nav ziņu")}; atbildes tokeni: {usage.get("output_tokens","nav ziņu")}. Pārbaudiet citātus un neatbilstības.'
+        self.import_summary.setText(self.import_message)
 
     def export(self):
         warnings = validate(self.project)

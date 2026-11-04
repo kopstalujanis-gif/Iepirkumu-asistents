@@ -33,3 +33,21 @@ def test_independent_people_and_supplier_override(tmp_path):
 
 def test_missing_role_does_not_become_phone():
     assert person_text({'first_name':'Anna','phone':'123'}).split('\n')[1]==''
+
+
+def test_hidden_sections_and_personal_defaults(tmp_path,monkeypatch):
+    import json
+    from iepirkumi.models import HIDDEN_FIELDS
+    profile=tmp_path/'defaults.json'
+    profile.write_text(json.dumps({'employee':{'first_name':'Anna','last_name':'Ozola','position':'Direktore',
+        'header_name':'ANNAS OZOLAS','header_role':'direktores','responsible_text':'Anna Ozola; 111; anna@example.lv'}}),encoding='utf-8')
+    monkeypatch.setenv('IEPIRKUMI_PROFILE',str(profile))
+    app=QApplication.instance() or QApplication([])
+    window=Window(Store(tmp_path/'r.db'))
+    assert not (set(window.editors)&HIDDEN_FIELDS)
+    assert window.project.fields['preparer_genitive'].value=='ANNAS OZOLAS'
+    assert window.project.fields['preparer_role_genitive'].value=='direktores'
+    assert window.project.fields['responsible'].value=='Anna Ozola; 111; anna@example.lv'
+    window.editors['net'].setPlainText('500');window.choose_category(2)
+    assert window.project.fields['category'].value=='2'
+    window.dirty=False;window.close()

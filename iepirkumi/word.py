@@ -103,7 +103,11 @@ def _check(p, index, confirmed=True):
             mark(r, True)
 
 
-def generate(p, output, template=None):
+def generate(p, output, template=None, *, approved_layout=True):
+    if template is None and approved_layout:
+        from .avs_word import generate_avs
+        approved = default_template().with_name('avs_2026.docx')
+        return generate_avs(p, output, approved)
     template = Path(template or default_template())
     d = Document(template)
     # Reject different layouts rather than silently put values in wrong cells.

@@ -16,6 +16,8 @@ def smoke_test():
     from .storage import Store, save_project, load_project
     from .word import generate, default_template
     from .ui import Window
+    from .importer import read_file
+    import pymupdf
     app = QApplication.instance() or QApplication([])
     with tempfile.TemporaryDirectory(prefix='iepirkumi-smoke-') as folder:
         root = Path(folder)
@@ -27,8 +29,15 @@ def smoke_test():
         restored = load_project(root / 'project.json')
         generate(restored, root / 'document.docx')
         document = Document(root / 'document.docx')
-        if len(document.tables) != 4 or 'Palaišanas pārbaude' not in document.paragraphs[7].text:
+        if len(document.tables) != 4 or 'Palaišanas pārbaude' not in document.tables[3].cell(0,5).text:
             raise RuntimeError('Komplektētā lietotne neizveidoja sagaidīto DOCX.')
+        sample=pymupdf.open();page=sample.new_page(width=500,height=180)
+        page.insert_text((25,75),'Invoice 12345',fontsize=26)
+        (root/'scan.png').write_bytes(page.get_pixmap(matrix=pymupdf.Matrix(2,2)).tobytes('png'))
+        chunks,warnings=read_file(root/'scan.png',ocr=True)
+        if not chunks or '12345' not in chunks[0].text:
+            raise RuntimeError('Komplektētās lietotnes OCR lav+eng pārbaude neizdevās.')
+        sample.close()
         window = Window(Store(root / 'registry.sqlite3'))
         try:
             window.show()
@@ -40,7 +49,7 @@ def smoke_test():
             window.close()
     return {'status': 'passed', 'platform': sys.platform,
             'frozen': bool(getattr(sys, 'frozen', False)),
-            'checks': ['bundled_template', 'project_roundtrip', 'docx_export', 'sqlite_registry', 'qt_window']}
+            'checks': ['bundled_template', 'project_roundtrip', 'docx_export', 'sqlite_registry', 'qt_window', 'ocr_lav_eng']}
 
 
 def main():

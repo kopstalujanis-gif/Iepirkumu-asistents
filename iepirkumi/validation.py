@@ -15,11 +15,11 @@ def category(value):
 
 
 def validate(p):
-    warnings = list(p.warnings)
+    warnings = []
     for key, f in p.fields.items():
         if f.conflict and not f.confirmed:
             warnings.append(f'{LABELS[key]}: avotos ir dažādas vērtības; izvēlieties un apstipriniet.')
-    for key in ['subject', 'net', 'supplier_name', 'registration', 'preparer', 'responsible', 'necessity', 'budget']:
+    for key in ['request_subject','preparer_genitive','preparer_role_genitive','subject', 'net', 'supplier_name', 'registration', 'preparer', 'responsible', 'necessity', 'budget']:
         if not p.fields[key].value:
             warnings.append(f'{LABELS[key]}: nav ievadīts.')
     net = p.fields['net'].value
@@ -45,4 +45,5 @@ def validate(p):
     for key, f in p.fields.items():
         if f.value and not f.confirmed:
             warnings.append(f'{LABELS[key]}: vērtība nav apstiprināta; dokumentā būs iezīmēta.')
+    warnings.extend(p.warnings)
     return list(dict.fromkeys(warnings))

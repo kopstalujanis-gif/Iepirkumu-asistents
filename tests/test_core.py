@@ -49,7 +49,7 @@ def test_word_preserves_original_and_font(tmp_path):
                 'preparer':'Anna Ozola\nDirektore\n111\na@example.lv','responsible':'Berta Liepa\nSpeciāliste\n222\nb@example.lv',
                 'supplier_name':'DM PREMIUM SIA','registration':'40103206925','deadline':'15.12.2026','electronic':'Jā'}.items():
         p.fields[k]=Field(v,confirmed=True)
-    out=tmp_path/'out.docx'; generate(p,out)
+    out=tmp_path/'out.docx'; generate(p,out,approved_layout=False)
     d=Document(out); orig=Document(default_template())
     assert len(d.tables)==len(orig.tables)==4
     assert [len(t.rows) for t in d.tables]==[len(t.rows) for t in orig.tables]

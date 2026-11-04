@@ -7,8 +7,12 @@ if ($LASTEXITCODE -ne 0) { throw 'Nepieciešams Python 3.12.' }
 if ($LASTEXITCODE -ne 0) { throw 'Atkarību instalēšana neizdevās.' }
 & .\.venv\Scripts\python.exe -m pytest -q
 if ($LASTEXITCODE -ne 0) { throw 'Testi neizdevās.' }
-& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --onedir --name IepirkumuAsistents --paths . --add-data 'templates\oficiala_2026.docx;templates' scripts\run_app.py
+& .\.venv\Scripts\python.exe -m PyInstaller --noconfirm --clean --windowed --onedir --name IepirkumuAsistents --paths . --add-data 'templates\oficiala_2026.docx;templates' --add-data 'templates\avs_2026.docx;templates' --add-data 'assets\tessdata;tessdata' --hidden-import keyring.backends.Windows scripts\run_app.py
 if ($LASTEXITCODE -ne 0) { throw 'EXE būvēšana neizdevās.' }
+# Personal defaults are optional build input, never tracked application source.
+if (Test-Path 'local\defaults.json') {
+    Copy-Item 'local\defaults.json' 'dist\IepirkumuAsistents\IepirkumuAsistents.profile.json'
+}
 # Verify the actual EXE and its bundled template before distributing it.
 $report = Join-Path (Get-Location) 'dist\windows-smoke.json'
 Remove-Item $report -ErrorAction SilentlyContinue
