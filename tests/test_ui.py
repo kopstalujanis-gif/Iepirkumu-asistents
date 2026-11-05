@@ -51,3 +51,23 @@ def test_hidden_sections_and_personal_defaults(tmp_path,monkeypatch):
     window.editors['net'].setPlainText('500');window.choose_category(2)
     assert window.project.fields['category'].value=='2'
     window.dirty=False;window.close()
+
+
+def test_partial_ai_rejections_remain_separate_and_persist(tmp_path,monkeypatch):
+    from iepirkumi.importer import Chunk
+    from iepirkumi.storage import save_project,load_project
+    from iepirkumi.pipeline import import_chunks
+    app=QApplication.instance() or QApplication([])
+    monkeypatch.setenv('IEPIRKUMI_PROFILE',str(tmp_path/'absent.json'))
+    w=Window(Store(tmp_path/'db'))
+    monkeypatch.setattr(w,'show_ai_rejections',lambda:None)
+    rejected={'field':'bank','value':'Invented','quote':'Invented','source':'offer.pdf','location':'lpp. 2','reason':'Nav avotā'}
+    w.ai_finished([('gross','1397.91',Chunk('offer.pdf','lpp. 2','1 397,91','MI; obligāti pārbaudīt'))],
+                  {'input_tokens':100,'output_tokens':20,'validation':{'accepted':1,'rejected':[rejected]}})
+    assert w.project.fields['gross'].value=='1397.91' and not w.project.fields['gross'].confirmed
+    assert not w.project.fields['bank'].value and not w.project.imports
+    assert w.project.ai_rejections==[rejected]
+    save_project(w.project,tmp_path/'p.json');p=load_project(tmp_path/'p.json')
+    import_chunks(p,[])
+    assert p.ai_rejections==[rejected] and not p.fields['bank'].value
+    w.dirty=False;w.close()

@@ -66,9 +66,9 @@ class Window(QMainWindow):
         self.project = Procurement(); self.path = None
         self.loading = False; self.dirty = False; self.busy = False; self.worker = None
         self.session_api_key=''; self.import_message=''; self.import_failed=False
-        self.setWindowTitle('Iepirkumu asistents 0.2'); self.resize(1320,880)
+        self.setWindowTitle('Iepirkumu asistents 0.2.1'); self.resize(1320,880)
         self.toolbar = self.addToolBar('Darbības'); self.toolbar.setMovable(False)
-        for label, fn in [('Jauns',self.new),('Atvērt',self.open),('Saglabāt',self.save),('Importēt protokolu',lambda:self.import_doc(True)),('Importēt piedāvājumus',lambda:self.import_doc(False)),('Ģenerēt DOCX',self.export),('MI analīze',self.analyze_ai)]:
+        for label, fn in [('Jauns',self.new),('Atvērt',self.open),('Saglabāt',self.save),('Importēt protokolu',lambda:self.import_doc(True)),('Importēt piedāvājumus',lambda:self.import_doc(False)),('Ģenerēt DOCX',self.export),('MI analīze',self.analyze_ai),('MI noraidījumi',self.show_ai_rejections)]:
             action = QAction(label,self); action.triggered.connect(fn); self.toolbar.addAction(action)
         self.tabs = QTabWidget(); self.setCentralWidget(self.tabs)
         self.build_project(); self.build_sources(); self.build_registers(); self.build_help()
@@ -378,9 +378,23 @@ class Window(QMainWindow):
 
     def ai_finished(self,entries,usage):
         from .ai import apply
-        apply(self.project,entries);self.load_fields();self.dirty=True
+        apply(self.project,entries)
+        rejected=usage.get('validation',{}).get('rejected',[])
+        self.project.ai_rejections.extend(rejected)
+        self.load_fields();self.dirty=True
         self.import_message=f'MI atgrieza {len(entries)} vērtības. Ievades tokeni: {usage.get("input_tokens","nav ziņu")}; atbildes tokeni: {usage.get("output_tokens","nav ziņu")}. Pārbaudiet citātus un neatbilstības.'
+        self.import_message+=f' Noraidītas {len(rejected)} vērtības (nav izmantotas). Skatiet “MI noraidījumi”.'
         self.import_summary.setText(self.import_message)
+        if rejected:self.show_ai_rejections()
+
+    def show_ai_rejections(self):
+        dialog=QDialog(self);dialog.setWindowTitle('MI noraidījumi — šīs vērtības nav izmantotas');dialog.resize(760,550)
+        layout=QVBoxLayout(dialog);view=QPlainTextEdit();view.setReadOnly(True)
+        rows=[]
+        for r in self.project.ai_rejections:
+            rows.append('Lauks: '+LABELS.get(r.get('field'),r.get('field',''))+'\nVērtība: '+r.get('value','')+'\nAvots: '+r.get('source','')+' · '+r.get('location','')+'\nMI citāts: '+r.get('quote','')+'\nIemesls: '+r.get('reason',''))
+        view.setPlainText('\n\n'.join(rows) or 'Noraidītu MI vērtību nav.');layout.addWidget(view)
+        close=QPushButton('Aizvērt');close.clicked.connect(dialog.accept);layout.addWidget(close);dialog.exec()
 
     def export(self):
         warnings = validate(self.project)

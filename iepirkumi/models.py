@@ -93,6 +93,7 @@ class Procurement:
     fields: dict[str, Field] = field(default_factory=lambda: {k: Field() for k in LABELS})
     imports: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    ai_rejections: list[dict] = field(default_factory=list)
 
     def to_json(self):
         return json.dumps(asdict(self), ensure_ascii=False, indent=2)
@@ -107,6 +108,7 @@ class Procurement:
                                       data.get("edited", False), data.get("confirmed", False))
         p.imports = obj.get("imports", [])
         p.warnings = obj.get("warnings", [])
+        p.ai_rejections = obj.get("ai_rejections", [])
         return p
 
 # Keep legacy fields in saved projects for compatibility, but remove the requested UI sections.

@@ -10,6 +10,7 @@ import urllib.request
 import urllib.error
 from .models import LABELS, Evidence
 from .importer import Chunk, add_match
+from .citations import locate
 
 ENDPOINT = 'https://api.openai.com/v1/responses'
 DEFAULT_MODEL = 'gpt-4.1-mini'
@@ -61,6 +62,7 @@ def prepare(chunks, selected_registration='', pdf_path=None):
         'Ja dots selected_registration, piedāvājumos izmanto tikai šo piegādātāju. Ja ir vairāki pretendenti un '
         'nav noteikta uzvarētāja, neatgriez konkrēta piegādātāja laukus. '
         'Katram laukam atgriez precīzu avota source_id, burtisku citātu un PDF lapu. '
+        'Teksta avotam kopē īsāko nepārtraukto citātu ar faktisko vērtību; nepārfrāzē un nesalīmē dažādas tabulas šūnas vai teikumus. '
         'Atšķirīgas vērtības atgriez atsevišķi, tās neslēpjot. Neatgriez tukšus/nezināmus laukus. '
         'Summas atgriez kā skaitli bez valūtas ar divām decimāldaļām. '
         'subject formulē īsi; request_subject ir latviski pareizs teksts pēc “par”. '
@@ -103,24 +105,40 @@ def request(job, api_key, *, consent=False, transport=None):
     data=json.loads(''.join(texts))
     entries=data.get('extractions')
     if not isinstance(entries,list) or len(entries)>300:raise ValueError('Nederīgs MI datu saraksts.')
-    # Validate the entire response before modifying any project field.
-    validated=[]
-    for e in entries:
-        if not isinstance(e,dict):raise ValueError('Nederīga MI ieraksta struktūra.')
-        if e.get('field') not in ALLOWED or e.get('source_id') not in job['sources']:raise ValueError('MI norādījis nezināmu lauku vai avotu.')
-        if not all(isinstance(e.get(k),str) and e[k].strip() and len(e[k])<=4000 for k in ('value','quote')):
-            raise ValueError('MI atgriezis vērtību bez derīga citāta.')
-        source=job['sources'][e['source_id']]
-        page=e.get('page')
-        if e['source_id']=='pdf':
-            if type(page) is not int or not 1<=page<=job['pages']:raise ValueError('MI atgriezis nederīgu PDF lappusi.')
-            location=f'lpp. {page}'
+    validated=[];rejected=[]
+    for index,e in enumerate(entries,1):
+        reason=None;source=None;location=None
+        if not isinstance(e,dict):
+            rejected.append({'entry':index,'reason':'Nederīga MI ieraksta struktūra.'});continue
+        if not isinstance(e.get('field'),str) or e['field'] not in ALLOWED:
+            reason='Nezināms vai automātiski neaizpildāms lauks.'
+        elif not isinstance(e.get('source_id'),str) or e['source_id'] not in job['sources']:
+            reason='Norādītais avots nav atlasītajā ievadē.'
+        elif not all(isinstance(e.get(k),str) and e[k].strip() and len(e[k])<=4000 for k in ('value','quote')):
+            reason='Trūkst derīgas vērtības vai burtiska citāta.'
         else:
-            normalize=lambda x:' '.join(x.split()).casefold()
-            if normalize(e['quote']) not in normalize(source.text):raise ValueError('MI citāts nav atrodams norādītajā tekstā; atbilde nav piemērota.')
-            location=source.location
+            source=job['sources'][e['source_id']]
+            page=e.get('page')
+            if e['source_id']=='pdf':
+                if type(page) is not int or not 1<=page<=job['pages']:
+                    reason='Nederīgs vizuālā PDF lappuses numurs.'
+                else:location=f'lpp. {page}'
+            else:
+                matched=locate(e['quote'],source,job['sources'])
+                if matched is None:
+                    reason='Citāts nav atrodams šī faila nolasītajā tekstā. Pārbaudiet tabulu vai izvēlieties PDF vizuālo analīzi.'
+                else:
+                    source=matched;location=source.location
+        if reason:
+            rejected.append({'entry':index,'field':str(e.get('field',''))[:100],
+                             'value':str(e.get('value',''))[:4000],'quote':str(e.get('quote',''))[:4000],
+                             'source':source.source if source else '',
+                             'location':source.location if source else '', 'reason':reason})
+            continue
         validated.append((e['field'],e['value'],Chunk(source.source,location,e['quote'],'MI; obligāti pārbaudīt')))
-    return validated,result.get('usage',{})
+    usage=dict(result.get('usage') or {})
+    usage['validation']={'accepted':len(validated),'rejected':rejected}
+    return validated,usage
 
 
 def apply(project, entries):

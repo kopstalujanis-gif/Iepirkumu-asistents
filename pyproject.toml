@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "iepirkumu-asistents"
-version = "0.2.0"
+version = "0.2.1"
 description = "Lokāls Ādažu vidusskolas iepirkumu iesniegumu sagatavošanas rīks"
 requires-python = ">=3.12"
 dependencies = ["PySide6-Essentials==6.12.0", "python-docx==1.2.0", "PyMuPDF==1.26.6", "openpyxl==3.1.5", "keyring==25.6.0"]
